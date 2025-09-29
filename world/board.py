@@ -1,84 +1,68 @@
 # world/board.py
-
 """
-Módulo para la generación de tableros de juego (laberintos).
-Ahora incluye un mapa fijo basado en el original de Pac-Man.
+Generador de tableros tipo Pac-Man Maze.
+Mapa fijo inspirado en el diseño clásico con casa de fantasmas.
 """
 
 # Constantes del tablero
-DEFAULT_ROWS = 21
+DEFAULT_ROWS = 19
 DEFAULT_COLS = 21
 WALL = 1
 PATH = 0
+GHOST_HOUSE = 2  # Celda especial para la casa de fantasmas (solo fantasmas pueden estar aquí)
 
-# Mapa original de Pac-Man (simplificado a 21x21)
-# 1 = Pared, 0 = Camino
+# Mapa Pac-Man auténtico 19x21
+# 0 = Camino, 1 = Pared, 2 = Casa de fantasmas
 ORIGINAL_PACMAN_MAZE = [
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
     [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
     [1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1],
+    [1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1],
     [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
     [1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 1],
-    [1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-    [1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1],
-    [0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0],
-    [1, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1],
-    [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-    [1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1],
-    [0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0],
-    [1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1],
-    [1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-    [1, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1],
-    [1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1],
-    [1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1],
     [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-    [1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1],
+    [1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1],
+    [1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1],
+    [1, 1, 1, 1, 0, 1, 0, 1, 1, 2, 2, 2, 1, 1, 0, 1, 0, 1, 1, 1, 1],  # Casa fantasmas
+    [0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 2, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0],  # Puerta casa
+    [1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1],
+    [1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1],
+    [1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1],
+    [1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1],
+    [1, 0, 0, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1],
+    [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],
+    [1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1],
     [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
 ]
 
 # Posiciones de spawn (fila, columna)
-PACMAN_SPAWN = (19, 10) # Centro inferior
-GHOST_SPAWN = [(9, 9), (9, 10), (9, 11), (10, 10)] # Casa de fantasmas (centro)
-POWER_PELLET_POSITIONS = [(1, 1), (1, 19), (19, 1), (19, 19)] # Esquinas
+PACMAN_SPAWN = (16, 10)  # Parte inferior cerca del centro
+GHOST_HOUSE_CENTER = (10, 10)  # Centro de la casa de fantasmas
+GHOST_SPAWN = [
+    (10, 9),   # Blinky
+    (10, 10),  # Pinky (centro)
+    (10, 11),  # Inky
+    (9, 10)    # Clyde
+]
+GHOST_HOUSE_EXIT = (8, 10)  # Posición justo fuera de la casa
+POWER_PELLET_POSITIONS = [(1, 1), (1, 19), (16, 1), (16, 19)]  # Esquinas estratégicas
 
 
 class BoardGenerator:
-    """
-    Generador de laberintos para el juego PACMAN.
-    Ahora carga un mapa fijo basado en el original.
-    """
+    """Generador del laberinto tipo Pac-Man Maze."""
 
     def __init__(self, rows: int = DEFAULT_ROWS, cols: int = DEFAULT_COLS):
-        """
-        Inicializa el generador con dimensiones específicas.
-        No se usan rows y cols porque el mapa es fijo.
-        """
         if rows != DEFAULT_ROWS or cols != DEFAULT_COLS:
-             print(f"Advertencia: El mapa es fijo de {DEFAULT_ROWS}x{DEFAULT_COLS}. Las dimensiones solicitadas ({rows}x{cols}) se ignoran.")
+            print(f"[WARN] Mapa fijo {DEFAULT_ROWS}x{DEFAULT_COLS}. Dimensiones ({rows}x{cols}) ignoradas.")
         self.rows = DEFAULT_ROWS
         self.cols = DEFAULT_COLS
 
     def generate_maze(self) -> list[list[int]]:
-        """
-        Devuelve el mapa fijo original de Pac-Man.
-
-        Returns:
-            List[List[int]]: Matriz 2D donde 1 = pared, 0 = camino.
-        """
-        # Devolvemos una copia para evitar modificaciones accidentales
+        """Devuelve el mapa fijo de Pac-Man."""
         return [row[:] for row in ORIGINAL_PACMAN_MAZE]
 
     def get_walkable_positions(self, maze: list[list[int]]) -> list[tuple[int, int]]:
-        """
-        Extrae todas las posiciones transitables de un laberinto.
-
-        Args:
-            maze (List[List[int]]): Laberinto generado.
-
-        Returns:
-            List[Tuple[int, int]]: Lista de coordenadas (fila, columna) transitables.
-        """
+        """Extrae posiciones transitables (PATH=0)."""
         walkable = []
         for i in range(self.rows):
             for j in range(self.cols):
@@ -93,33 +77,24 @@ class BoardGenerator:
         exclude_positions: set[tuple[int, int]] = None
     ) -> set[tuple[int, int]]:
         """
-        Coloca comida de forma aleatoria en posiciones transitables.
-
-        Usa el PRNG de Python (Mersenne Twister) para garantizar aleatoriedad controlada.
-
+        Coloca comida aleatoriamente usando PRNG (Mersenne Twister).
+        
         Args:
-            walkable_positions (List[Tuple[int, int]]): Lista de celdas donde se puede caminar.
-            num_food (int): Cantidad de comida a colocar.
-            exclude_positions (Set[Tuple[int, int]], opcional): Posiciones a excluir (ej.: spawn del jugador).
-
+            walkable_positions: Celdas transitables
+            num_food: Cantidad de comida
+            exclude_positions: Posiciones a excluir (spawns, power-ups)
+        
         Returns:
-            Set[Tuple[int, int]]: Conjunto de posiciones donde se colocó comida.
+            Set de posiciones con comida
         """
         if exclude_positions is None:
             exclude_positions = set()
 
-        # Filtrar posiciones válidas
-        valid_positions = [
-            pos for pos in walkable_positions
-            if pos not in exclude_positions
-        ]
+        valid_positions = [pos for pos in walkable_positions if pos not in exclude_positions]
 
         if num_food > len(valid_positions):
-            num_food = len(valid_positions)  # Evitar error si no hay suficientes celdas
+            num_food = len(valid_positions)
 
-        # Selección aleatoria sin reemplazo
-        import random # Importar aquí para evitar dependencia global
+        import random
         food_positions = set(random.sample(valid_positions, num_food))
         return food_positions
-
-# --- Fin de board.py ---
