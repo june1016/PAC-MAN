@@ -1,0 +1,16 @@
+# Entorno virtual
+venv/
+env/
+ENV/
+
+# Archivos de sistema
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Archivos de datos temporales (opcional: scores.json puede guardarse o no)
+# data/scores.json
+
+# Logs
+*.log
