@@ -17,7 +17,8 @@ from ui.sprite_renderer import SpriteRenderer
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
 CAPTION = "PACMAN - Proyecto Académico"
-BACKGROUND_COLOR = (0, 0, 0)  # Negro
+BACKGROUND_COLOR = (0, 0, 0)
+FPS_LIMIT = 60  # FPS fijos para evitar velocidad variable
 
 
 def main():
@@ -28,11 +29,11 @@ def main():
     clock = pygame.time.Clock()
 
     # Inicializar subsistemas
-    sound_manager = SoundManager()  # Inicializar sound_manager aquí
-    game_core = GameCore(sound_manager) # Pasar sound_manager a GameCore
+    sound_manager = SoundManager()
+    game_core = GameCore(sound_manager)
     score_manager = ScoreManager()
     hud = HUD(SCREEN_WIDTH, SCREEN_HEIGHT)
-    sprite_renderer = SpriteRenderer()  # ✅ Inicializado una vez
+    sprite_renderer = SpriteRenderer()
 
     # Cargar y reproducir música de fondo
     if sound_manager.load_music("background.ogg"):
@@ -41,8 +42,7 @@ def main():
     # Registrar callbacks del HUD
     def start_game():
         game_core.start_new_game()
-        print("Game started. State:", game_core.game_state)
-        sound_manager.play_level_start_sound()
+        print(f"[MAIN] Juego iniciado - Nivel {game_core.level}")
 
     def quit_game():
         pygame.quit()
@@ -50,13 +50,19 @@ def main():
 
     def back_to_menu():
         game_core.game_state = GameState.MENU
+        print("[MAIN] Volver al menú")
 
     hud.set_callbacks(start_game, quit_game, back_to_menu)
 
-    # Bucle principal
+    # Variables de control
     running = True
+    frame_count = 0
+
+    # Bucle principal
     while running:
-        # --- Procesar eventos ---
+        frame_count += 1
+        
+        # --- PROCESAR EVENTOS ---
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -75,44 +81,44 @@ def main():
                         game_core.handle_input("LEFT")
                     elif event.key in (pygame.K_RIGHT, pygame.K_d):
                         game_core.handle_input("RIGHT")
-                    elif event.key == pygame.K_ESCAPE:  # Pausar el juego
-                        game_core.game_state = GameState.PAUSED
-            elif game_core.game_state == GameState.PAUSED:
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:  # Reanudar el juego
-                    game_core.game_state = GameState.PLAYING
+                    elif event.key == pygame.K_ESCAPE:
+                        game_core.handle_input("PAUSE")
+            
+            elif game_core.is_paused():
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    game_core.handle_input("PAUSE")
+            
             elif game_core.is_game_over():
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
                     start_game()
 
-        # --- Actualizar lógica del juego ---
+        # --- ACTUALIZAR LÓGICA ---
         if game_core.is_playing():
-            prev_score = game_core.pacman.score
             game_core.update()
-            # Reproducir sonido de comida solo si el puntaje aumentó
-            if game_core.pacman.score > prev_score:
-                sound_manager.play_eat_sound()
-            # Reproducir sonido de muerte si se perdió una vida
-            if game_core.pacman.lives < getattr(game_core, '_last_lives', 3):
-                sound_manager.play_death_sound()
-            game_core._last_lives = game_core.pacman.lives
 
-        # --- Renderizar ---
+        # --- RENDERIZAR ---
         screen.fill(BACKGROUND_COLOR)
 
-        print("Game state:", game_core.game_state, "Is playing:", game_core.is_playing())
+        # Renderizar mundo del juego
+        if game_core.is_playing() or game_core.is_paused():
+            sprite_renderer.draw_world(screen, game_core, cell_size=30)
 
-        # --- Renderizado del mundo ---
-        if game_core.is_playing():
-            sprite_renderer.draw_world(screen, game_core, cell_size=32)  # ✅ Usar instancia existente
-
+        # Renderizar HUD (menús, puntajes, etc.)
         hud.draw(screen, game_core.game_state, game_core, score_manager)
+
         pygame.display.flip()
 
-        # --- Control de FPS ---
-        fps = game_core.get_fps() if game_core.is_playing() else 60
-        clock.tick(fps)
+        # --- CONTROL DE FPS ---
+        clock.tick(FPS_LIMIT)
 
-    # Guardar puntaje final si aplica
+        # Debug cada 60 frames (1 segundo)
+        if frame_count % 60 == 0 and game_core.is_playing():
+            print(f"[DEBUG] Score: {game_core.pacman.score} | "
+                  f"Vidas: {game_core.pacman.lives} | "
+                  f"Comida: {len(game_core.food_positions)} | "
+                  f"Fantasmas activos: {sum(1 for g in game_core.ghosts if not g.in_house)}")
+
+    # Guardar puntaje final
     if game_core.pacman and game_core.pacman.score > 0:
         if score_manager.is_high_score(game_core.pacman.score):
             score_manager.add_score(
@@ -120,6 +126,7 @@ def main():
                 level=game_core.level,
                 name="Player"
             )
+            print(f"[MAIN] ¡Nuevo récord! {game_core.pacman.score} puntos")
 
     pygame.quit()
     sys.exit()

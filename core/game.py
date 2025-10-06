@@ -4,11 +4,18 @@ transición de niveles y coordinación entre entidades.
 """
 
 import random
-from typing import List, Set, Tuple
-# Importamos las constantes del nuevo mapa desde world.board
-from world.board import BoardGenerator, DEFAULT_ROWS, DEFAULT_COLS, PATH, PACMAN_SPAWN, GHOST_SPAWN, POWER_PELLET_POSITIONS
+from typing import List, Set, Tuple, Optional
+from world.board import (
+    BoardGenerator, 
+    DEFAULT_ROWS, 
+    DEFAULT_COLS, 
+    TILE_SIZE,
+    PACMAN_SPAWN, 
+    GHOST_SPAWN, 
+    GHOST_HOUSE_EXIT,
+    POWER_PELLET_POSITIONS
+)
 from entities.player import PacMan
-# Importamos las clases específicas de fantasmas
 from entities.ghosts import Blinky, Pinky, Inky, Clyde
 
 
@@ -28,23 +35,36 @@ class GameCore:
     puntaje, vidas y transición entre estados.
     """
 
-    def __init__(self, sound_manager): # Recibir sound_manager como parámetro
+    def __init__(self, sound_manager):
+        """Inicializa el núcleo del juego con gestor de sonido."""
         self.game_state = GameState.MENU
         self.level = 1
-        self.base_fps = 60  # FPS base en nivel 1
-        self.board_gen = BoardGenerator(DEFAULT_ROWS, DEFAULT_COLS) # Usar BoardGenerator
+        self.base_fps = 60
+        
+        # Sistema de tablero
+        self.board_gen = BoardGenerator(DEFAULT_ROWS, DEFAULT_COLS)
         self.maze: List[List[int]] = []
-        self.food_positions: Set[tuple[int, int]] = set()
-        # Usamos las posiciones fijas de POWER_PELLET_POSITIONS para las monedas grandes
-        self.power_pellet_positions: Set[tuple[int, int]] = set(POWER_PELLET_POSITIONS)
-        self.pacman: PacMan = None
+        
+        # Sistema de comida
+        self.food_positions: Set[Tuple[int, int]] = set()
+        self.power_pellet_positions: Set[Tuple[int, int]] = set()
+        self.initial_food_count = 0  # Para calcular progreso
+        
+        # Entidades
+        self.pacman: Optional[PacMan] = None
         self.ghosts: List = []
-        self.walkable_positions: List[tuple[int, int]] = []
-        # Usamos las posiciones fijas de GHOST_SPAWN para la casa de fantasmas
-        self.ghost_house = GHOST_SPAWN
-        self.sound_manager = sound_manager # Almacenar sound_manager
-        self.power_pellet_active = False # Indica si una moneda grande está activa
-        self.power_pellet_timer = 0 # Contador para el tiempo que dura la moneda grande
+        
+        # Sistema de power pellets
+        self.power_pellet_active = False
+        self.power_pellet_timer = 0
+        self.power_pellet_duration = 540  # ~9 segundos a 60 FPS (tiempo suficiente para comer fantasmas)
+        
+        # Audio
+        self.sound_manager = sound_manager
+        
+        # Sistema de release de fantasmas
+        self.ghost_release_timer = 0
+        self.ghosts_released = 0  # Contador de fantasmas liberados
 
     def start_new_game(self) -> None:
         """Inicia un nuevo juego desde el nivel 1."""
@@ -52,168 +72,400 @@ class GameCore:
         self.game_state = GameState.PLAYING
         self.power_pellet_active = False
         self.power_pellet_timer = 0
+        self.ghosts_released = 0
         self._setup_level()
 
     def _setup_level(self) -> None:
         """Configura el nivel actual: laberinto, comida, entidades."""
-        # Generar laberinto (ahora fijo)
+        # Generar laberinto fijo
         self.maze = self.board_gen.generate_maze()
-        self.walkable_positions = self.board_gen.get_walkable_positions(self.maze)
-
-        print(f"Labyrinth generated: {len(self.maze)}x{len(self.maze[0]) if self.maze else 0}")
-        print(f"Food positions: {len(self.food_positions)}")
-
-        # Determinar cantidad de comida (70% de celdas transitables, excluyendo spawns y power pellets)
-        exclude_positions = set([PACMAN_SPAWN] + GHOST_SPAWN + list(self.power_pellet_positions))
-        num_food = max(10, int(len(self.walkable_positions) * 0.7))
-
-        # Posición de Pac-Man (fija)
+        
+        # Configurar exclusiones para comida NORMAL (dots)
+        # IMPORTANTE: NO excluir power pellets aquí, solo spawns
+        exclude_positions = {PACMAN_SPAWN}
+        exclude_positions.update(GHOST_SPAWN)
+        
+        # Colocar comida en TODAS las celdas transitables (excepto spawns)
+        self.food_positions = self.board_gen.place_all_food(exclude_positions)
+        
+        # NUEVO: Remover posiciones de power pellets de food_positions
+        # para que no haya superposición
+        for pellet_pos in POWER_PELLET_POSITIONS:
+            self.food_positions.discard(pellet_pos)
+        
+        # Configurar power pellets
+        self.power_pellet_positions = self.board_gen.get_power_pellets()
+        
+        # Guardar cantidad inicial para cálculo de progreso
+        self.initial_food_count = len(self.food_positions) + len(self.power_pellet_positions)
+        
+        # Crear Pac-Man en spawn fijo
         self.pacman = PacMan(PACMAN_SPAWN, lives=3)
-
-        # Crear fantasmas específicos en posiciones fijas
+        
+        # Crear fantasmas en spawns fijos (DENTRO de la casa)
         self.ghosts = []
-        ghost_spawn_points = GHOST_SPAWN[:]
-        # Asumimos que GHOST_SPAWN tiene al menos 4 posiciones
-        if len(ghost_spawn_points) >= 4:
-            self.ghosts.append(Blinky(ghost_spawn_points[0]))
-            self.ghosts.append(Pinky(ghost_spawn_points[1]))
-            self.ghosts.append(Inky(ghost_spawn_points[2]))
-            self.ghosts.append(Clyde(ghost_spawn_points[3]))
-
-        # Colocar comida (excluyendo spawns y power pellets)
-        self.food_positions = self.board_gen.place_food(
-            self.walkable_positions, num_food, exclude_positions=exclude_positions
-        )
-
-        # Las monedas grandes ya están definidas en self.power_pellet_positions
-
+        if len(GHOST_SPAWN) >= 4:
+            self.ghosts.append(Blinky(GHOST_SPAWN[0]))    # Rojo
+            self.ghosts.append(Pinky(GHOST_SPAWN[1]))     # Rosa
+            self.ghosts.append(Inky(GHOST_SPAWN[2]))      # Cyan
+            self.ghosts.append(Clyde(GHOST_SPAWN[3]))     # Naranja
+        
+        # Sistema de release: Blinky sale primero inmediatamente
+        self.ghost_release_timer = 0
+        self.ghosts_released = 1  # Blinky ya está fuera
+        if self.ghosts:
+            self.ghosts[0].in_house = False  # Blinky empieza fuera
+        
+        print(f"[LEVEL {self.level}] Laberinto: {len(self.maze)}x{len(self.maze[0])}")
+        print(f"[LEVEL {self.level}] Comida (dots): {len(self.food_positions)}")
+        print(f"[LEVEL {self.level}] Power Pellets: {len(self.power_pellet_positions)}")
+        print(f"[LEVEL {self.level}] Total comida: {self.initial_food_count}")
 
     def handle_input(self, direction: str) -> None:
         """
         Procesa la entrada del jugador (teclado).
         
         Args:
-            direction (str): 'UP', 'DOWN', 'LEFT', 'RIGHT'.
+            direction: 'UP', 'DOWN', 'LEFT', 'RIGHT', 'PAUSE'
         """
         if self.game_state == GameState.PLAYING:
-            # Pasar self.sound_manager al método move de PacMan
-            # La dirección se almacena en PacMan pero el movimiento real se hace en update()
-            # Aquí solo almacenamos la dirección solicitada
-            self.pacman.next_direction = direction
+            if direction == "PAUSE":
+                self.game_state = GameState.PAUSED
+                if self.sound_manager:
+                    self.sound_manager.pause_music()
+            else:
+                # Almacenar dirección solicitada (el movimiento se hace en update)
+                self.pacman.next_direction = direction
+        
         elif self.game_state == GameState.PAUSED:
             if direction == "PAUSE":
                 self.game_state = GameState.PLAYING
+                if self.sound_manager:
+                    self.sound_manager.resume_music()
 
     def update(self) -> None:
-        """
-        Actualiza la lógica del juego: movimiento de fantasmas, colisiones, progreso.
-        """
+        """Actualiza la lógica del juego: movimiento, colisiones, progreso."""
         if self.game_state != GameState.PLAYING:
             return
 
-        # Actualizar estado de moneda grande
+        # ==================== SISTEMA DE POWER PELLETS ====================
         if self.power_pellet_active:
             self.power_pellet_timer -= 1
             if self.power_pellet_timer <= 0:
-                self.power_pellet_active = False
-                # Desactivar vulnerabilidad de fantasmas
-                for ghost in self.ghosts:
-                    ghost.is_vulnerable = False
-                    ghost.vulnerable_timer = 0
-                    ghost.frightened_timer = 0 # Reiniciar timer de miedo
+                self._deactivate_power_pellet()
 
-        # Interpolar posiciones para suavidad
-        self.pacman.interpolate_position()
+        # ==================== MOVIMIENTO DE PAC-MAN ====================
+        self._update_pacman_movement()
+
+        # ==================== SISTEMA DE RELEASE DE FANTASMAS ====================
+        self._update_ghost_release()
+
+        # ==================== MOVIMIENTO DE FANTASMAS ====================
         for ghost in self.ghosts:
-            ghost.interpolate_position()
+            if not ghost.in_house:
+                # Fantasma activo: usar IA según estado
+                target_pos = self._get_ghost_target(ghost)
+                ghost.move(self.maze, target_pos, self.board_gen)
+            else:
+                # Fantasma en casa: oscilar verticalmente
+                self._ghost_house_behavior(ghost)
 
-        # Mover PacMan
-        # Usamos la dirección almacenada (next_direction) si es válida, o la actual
-        # El método move ahora maneja la lógica de cambio de dirección
-        # Pasamos la dirección actual como argumento para que el movimiento se realice
-        current_dir_map = {"UP": (-1, 0), "DOWN": (1, 0), "LEFT": (0, -1), "RIGHT": (0, 1)}
-        current_dir = current_dir_map.get(self.pacman.direction, (0, 0))
-        new_row = self.pacman.position[0] + current_dir[0]
-        new_col = self.pacman.position[1] + current_dir[1]
+        # ==================== COLISIONES CON FANTASMAS ====================
+        self._check_ghost_collisions()
 
-        rows, cols = len(self.maze), len(self.maze[0])
-        if 0 <= new_row < rows and 0 <= new_col < cols and self.maze[new_row][new_col] == 0:
-            # La celda actual está libre, intentar moverse
-            self.pacman.move(self.pacman.direction, self.maze, self.food_positions, self.power_pellet_positions, self.sound_manager)
-        else:
-            # La celda actual está bloqueada, intentar con la dirección solicitada
-            next_dir_map = {"UP": (-1, 0), "DOWN": (1, 0), "LEFT": (0, -1), "RIGHT": (0, 1)}
-            next_dir = next_dir_map.get(self.pacman.next_direction, (0, 0))
-            new_row_next = self.pacman.position[0] + next_dir[0]
-            new_col_next = self.pacman.position[1] + next_dir[1]
-            if 0 <= new_row_next < rows and 0 <= new_col_next < cols and self.maze[new_row_next][new_col_next] == 0:
-                # La celda para la dirección solicitada está libre, cambiar dirección y mover
-                self.pacman.direction = self.pacman.next_direction
-                self.pacman.move(self.pacman.direction, self.maze, self.food_positions, self.power_pellet_positions, self.sound_manager)
-            # Si no, PacMan no se mueve pero mantiene su dirección actual
-
-        # Mover fantasmas (ahora pasamos la posición y dirección de PacMan)
-        for ghost in self.ghosts:
-            ghost.move(self.maze, tuple(self.pacman.position), self.pacman.direction)
-
-        # Verificar colisión con fantasmas
-        for ghost in self.ghosts:
-            if self.pacman.position == ghost.position:
-                if ghost.is_vulnerable:
-                    # Comer fantasma
-                    ghost.is_vulnerable = False
-                    ghost.vulnerable_timer = 0
-                    ghost.frightened_timer = 0
-                    # Reiniciar posición del fantasma (a la casa)
-                    spawn_candidates = self.ghost_house
-                    if spawn_candidates:
-                        new_pos = random.choice(spawn_candidates)
-                        ghost.position = list(new_pos)
-                        ghost.float_pos = [float(ghost.position[0]), float(ghost.position[1])]
-                        ghost.last_direction = (0, 0) # Reiniciar dirección al spawn
-                    self.pacman.score += 200 # Puntos por comer fantasma (actualizar score de pacman)
-                    if self.sound_manager:
-                        self.sound_manager.play_eat_sound() # Sonido al comer fantasma
-                else:
-                    if self.pacman.lose_life():
-                        # Reiniciar posición, mantener comida restante
-                        spawn_candidates = [
-                            pos for pos in self.walkable_positions
-                            if 3 <= pos[0] <= DEFAULT_ROWS - 4 and 3 <= pos[1] <= DEFAULT_COLS - 4
-                        ]
-                        if spawn_candidates:
-                            new_pos = random.choice(spawn_candidates)
-                            self.pacman.reset_position(new_pos)
-                    else:
-                        self.game_state = GameState.GAME_OVER
-                    break
-
-        # Verificar si se completó el nivel (toda la comida recolectada)
+        # ==================== VERIFICAR NIVEL COMPLETO ====================
         if not self.food_positions and not self.power_pellet_positions:
-            self.level += 1
-            self._setup_level()
+            self._advance_level()
 
-    def get_fps(self) -> int:
+    def _update_pacman_movement(self) -> None:
+        """Maneja el movimiento de Pac-Man con sistema de colisiones correcto."""
+        # CORREGIDO: Usar los atributos de PacMan directamente
+        self.pacman.move_delay += 1
+        if self.pacman.move_delay < self.pacman.move_frequency:
+            return  # No moverse aún
+        
+        # Resetear delay
+        self.pacman.move_delay = 0
+        
+        direction_map = {
+            "UP": (-1, 0),
+            "DOWN": (1, 0),
+            "LEFT": (0, -1),
+            "RIGHT": (0, 1)
+        }
+        
+        # Intentar moverse en la dirección solicitada (next_direction)
+        if self.pacman.next_direction:
+            dr, dc = direction_map.get(self.pacman.next_direction, (0, 0))
+            new_row = self.pacman.position[0] + dr
+            new_col = self.pacman.position[1] + dc
+            
+            # Validar con el sistema de colisiones del board
+            if self.board_gen.can_pacman_move_to(new_row, new_col):
+                # Cambio de dirección exitoso
+                self.pacman.direction = self.pacman.next_direction
+                self.pacman.position = [new_row, new_col]
+                self._check_food_collision()
+                return
+        
+        # Si no pudo cambiar dirección, continuar en la dirección actual
+        dr, dc = direction_map.get(self.pacman.direction, (0, 0))
+        new_row = self.pacman.position[0] + dr
+        new_col = self.pacman.position[1] + dc
+        
+        # Manejar túneles
+        new_row, new_col = self.board_gen.handle_tunnel_teleport(new_row, new_col)
+        
+        # Validar movimiento en dirección actual
+        if self.board_gen.can_pacman_move_to(new_row, new_col):
+            self.pacman.position = [new_row, new_col]
+            self._check_food_collision()
+
+    def _check_food_collision(self) -> None:
+        """Verifica si Pac-Man comió comida o power pellet."""
+        pos_tuple = tuple(self.pacman.position)
+        
+        # Comida normal (dot)
+        if pos_tuple in self.food_positions:
+            self.food_positions.remove(pos_tuple)
+            self.pacman.score += 10
+            if self.sound_manager:
+                self.sound_manager.play_eat_sound()
+        
+        # Power pellet (manzana/fresa)
+        elif pos_tuple in self.power_pellet_positions:
+            self.power_pellet_positions.remove(pos_tuple)
+            self.pacman.score += 50
+            self._activate_power_pellet()
+            if self.sound_manager:
+                self.sound_manager.play_eat_sound()
+
+    def _activate_power_pellet(self) -> None:
+        """Activa el modo de vulnerabilidad de fantasmas."""
+        self.power_pellet_active = True
+        self.power_pellet_timer = self.power_pellet_duration
+        
+        # Hacer vulnerables a todos los fantasmas que no están en casa
+        for ghost in self.ghosts:
+            if not ghost.in_house:
+                ghost.is_vulnerable = True
+                ghost.vulnerable_timer = self.power_pellet_duration
+
+    def _deactivate_power_pellet(self) -> None:
+        """Desactiva el modo de vulnerabilidad."""
+        self.power_pellet_active = False
+        for ghost in self.ghosts:
+            ghost.is_vulnerable = False
+            ghost.vulnerable_timer = 0
+
+    def _update_ghost_release(self) -> None:
         """
-        Devuelve los FPS actuales, ajustados por nivel (dificultad).
+        Sistema de release secuencial de fantasmas.
+        Orden: Blinky (inmediato) -> Pinky (2s) -> Inky (4s) -> Clyde (6s)
+        """
+        if self.ghosts_released >= len(self.ghosts):
+            return  # Todos liberados
+        
+        self.ghost_release_timer += 1
+        
+        # Tiempos de release (a 60 FPS)
+        release_times = [0, 120, 240, 360]  # 0s, 2s, 4s, 6s
+        
+        for i, release_time in enumerate(release_times):
+            if i < self.ghosts_released:
+                continue  # Ya liberado
+            
+            if self.ghost_release_timer >= release_time:
+                if i < len(self.ghosts):
+                    self.ghosts[i].in_house = False
+                    self.ghosts[i].position = list(GHOST_HOUSE_EXIT)
+                    self.ghosts_released += 1
+                    print(f"[RELEASE] Fantasma {i} liberado")
+
+    def _ghost_house_behavior(self, ghost) -> None:
+        """Movimiento de fantasma dentro de la casa (oscilar verticalmente)."""
+        # CORREGIDO: Agregar delay para ralentizar oscilación
+        if not hasattr(ghost, 'house_direction'):
+            ghost.house_direction = 1  # 1 = abajo, -1 = arriba
+            ghost.house_delay = 0
+        
+        # Sistema de delay (moverse cada 15 frames = 4 oscilaciones/segundo)
+        ghost.house_delay += 1
+        if ghost.house_delay < 15:
+            return  # No moverse aún
+        
+        ghost.house_delay = 0
+        
+        new_row = ghost.position[0] + ghost.house_direction
+        
+        # Invertir dirección en los límites de la casa
+        if new_row < GHOST_SPAWN[0][0] - 1 or new_row > GHOST_SPAWN[0][0] + 1:
+            ghost.house_direction *= -1
+        else:
+            ghost.position[0] = new_row
+
+    def _get_ghost_target(self, ghost) -> Tuple[int, int]:
+        """
+        Determina el objetivo del fantasma según su tipo y estado.
         
         Returns:
-            int: FPS (mínimo 60, máximo 120).
+            (row, col) del objetivo
         """
+        if ghost.is_vulnerable:
+            # Huir de Pac-Man (comportamiento scatter invertido)
+            return self._get_scatter_target(ghost, flee=True)
+        
+        # Comportamiento normal según tipo
+        if isinstance(ghost, Blinky):
+            # Blinky persigue directamente a Pac-Man
+            return tuple(self.pacman.position)
+        
+        elif isinstance(ghost, Pinky):
+            # Pinky intenta emboscar (4 celdas adelante de Pac-Man)
+            direction_map = {
+                "UP": (-4, 0),
+                "DOWN": (4, 0),
+                "LEFT": (0, -4),
+                "RIGHT": (0, 4)
+            }
+            dr, dc = direction_map.get(self.pacman.direction, (0, 0))
+            target_row = self.pacman.position[0] + dr
+            target_col = self.pacman.position[1] + dc
+            return (target_row, target_col)
+        
+        elif isinstance(ghost, Inky):
+            # Inky usa lógica compleja basada en Blinky y Pac-Man
+            # Simplificado: persigue si está cerca, scatter si está lejos
+            distance = abs(ghost.position[0] - self.pacman.position[0]) + \
+                      abs(ghost.position[1] - self.pacman.position[1])
+            if distance < 8:
+                return tuple(self.pacman.position)
+            else:
+                return self._get_scatter_target(ghost)
+        
+        elif isinstance(ghost, Clyde):
+            # Clyde persigue si está lejos, huye si está cerca
+            distance = abs(ghost.position[0] - self.pacman.position[0]) + \
+                      abs(ghost.position[1] - self.pacman.position[1])
+            if distance > 8:
+                return tuple(self.pacman.position)
+            else:
+                return self._get_scatter_target(ghost)
+        
+        # Default: perseguir
+        return tuple(self.pacman.position)
+
+    def _get_scatter_target(self, ghost, flee: bool = False) -> Tuple[int, int]:
+        """
+        Devuelve posición de esquina para modo scatter.
+        
+        Args:
+            ghost: Fantasma
+            flee: Si True, huye de Pac-Man (power pellet activo)
+        """
+        corners = [
+            (1, 1),                           # Superior izquierda
+            (1, DEFAULT_COLS - 2),            # Superior derecha
+            (DEFAULT_ROWS - 2, 1),            # Inferior izquierda
+            (DEFAULT_ROWS - 2, DEFAULT_COLS - 2)  # Inferior derecha
+        ]
+        
+        if flee:
+            # Ir a la esquina MÁS LEJANA de Pac-Man
+            distances = [
+                abs(corner[0] - self.pacman.position[0]) + 
+                abs(corner[1] - self.pacman.position[1])
+                for corner in corners
+            ]
+            return corners[distances.index(max(distances))]
+        else:
+            # Esquinas fijas por tipo de fantasma
+            ghost_corners = {
+                Blinky: corners[1],  # Superior derecha
+                Pinky: corners[0],   # Superior izquierda
+                Inky: corners[3],    # Inferior derecha
+                Clyde: corners[2]    # Inferior izquierda
+            }
+            return ghost_corners.get(type(ghost), corners[0])
+
+    def _check_ghost_collisions(self) -> None:
+        """Verifica colisiones entre Pac-Man y fantasmas."""
+        for ghost in self.ghosts:
+            if ghost.in_house:
+                continue  # Fantasmas en casa no colisionan
+            
+            # Colisión exacta (misma celda)
+            if self.pacman.position == ghost.position:
+                if ghost.is_vulnerable:
+                    # Pac-Man come al fantasma
+                    self._eat_ghost(ghost)
+                else:
+                    # Fantasma mata a Pac-Man
+                    self._pacman_dies()
+                break
+
+    def _eat_ghost(self, ghost) -> None:
+        """Pac-Man come un fantasma vulnerable."""
+        ghost.is_vulnerable = False
+        ghost.vulnerable_timer = 0
+        ghost.in_house = True  # Enviar de vuelta a la casa
+        
+        # Reiniciar posición en la casa
+        ghost.position = list(GHOST_SPAWN[self.ghosts.index(ghost)])
+        
+        # Puntos y sonido
+        self.pacman.score += 200
+        if self.sound_manager:
+            self.sound_manager.play_eat_sound()
+        
+        print(f"[GHOST EATEN] +200 puntos | Score: {self.pacman.score}")
+
+    def _pacman_dies(self) -> None:
+        """Pac-Man pierde una vida."""
+        if self.sound_manager:
+            self.sound_manager.play_death_sound()
+        
+        if self.pacman.lose_life():
+            # Aún tiene vidas: reiniciar posición
+            self.pacman.reset_position(PACMAN_SPAWN)
+            
+            # Reiniciar fantasmas
+            for i, ghost in enumerate(self.ghosts):
+                ghost.position = list(GHOST_SPAWN[i])
+                ghost.in_house = True
+                ghost.is_vulnerable = False
+            
+            # Reiniciar sistema de release
+            self.ghosts_released = 1
+            if self.ghosts:
+                self.ghosts[0].in_house = False
+            
+            print(f"[DEATH] Vidas restantes: {self.pacman.lives}")
+        else:
+            # Game Over
+            self.game_state = GameState.GAME_OVER
+            print(f"[GAME OVER] Score final: {self.pacman.score}")
+
+    def _advance_level(self) -> None:
+        """Avanza al siguiente nivel."""
+        self.level += 1
+        print(f"[LEVEL UP] Nivel {self.level} completado!")
+        self._setup_level()
+
+    # ==================== GETTERS ====================
+    
+    def get_fps(self) -> int:
+        """Devuelve FPS ajustados por nivel (dificultad)."""
         return min(120, self.base_fps + (self.level - 1) * 10)
 
     def get_progress_percentage(self) -> float:
-        """
-        Calcula el porcentaje de comida recolectada en el nivel actual.
-        
-        Returns:
-            float: Porcentaje de avance (0.0 a 100.0).
-        """
-        total_food_initial = len(self.food_positions) + len(self.power_pellet_positions) + (self.pacman.score // 10)
-        if total_food_initial == 0:
+        """Calcula porcentaje de comida recolectada."""
+        if self.initial_food_count == 0:
             return 100.0
-        collected = self.pacman.score // 10
-        return (collected / total_food_initial) * 100
+        
+        remaining = len(self.food_positions) + len(self.power_pellet_positions)
+        collected = self.initial_food_count - remaining
+        return (collected / self.initial_food_count) * 100
 
     def is_game_over(self) -> bool:
         return self.game_state == GameState.GAME_OVER
