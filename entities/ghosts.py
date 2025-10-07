@@ -1,9 +1,10 @@
 """
 Sistema de fantasmas con comportamientos distintivos.
-Compatible con el sistema de colisiones de board.py y la lógica de game.py.
+Velocidades calibradas para jugabilidad cómoda.
 """
 import random
 from typing import List, Tuple, Optional
+
 
 class Ghost:
     """Clase base para todos los fantasmas."""
@@ -16,21 +17,22 @@ class Ghost:
         self.is_vulnerable = False
         self.vulnerable_timer = 0
         
-        # CORREGIDO: Velocidad base más lenta
         self.speed = 1
         self.move_delay = 0
-        self.move_frequency = 8  # Velocidad base (se sobrescribe en subclases)
+        self.move_frequency = 8
 
     def move(self, maze: List[List[int]], target: Tuple[int, int], board_gen) -> None:
-        # Actualizar timer de vulnerabilidad
         if self.is_vulnerable:
             self.vulnerable_timer -= 1
             if self.vulnerable_timer <= 0:
                 self.is_vulnerable = False
         
-        # Sistema de delay para ralentizar movimiento
         self.move_delay += 1
-        if self.move_delay < self.move_frequency:
+        current_frequency = self.move_frequency
+        if self.is_vulnerable:
+            current_frequency = int(self.move_frequency * 1.5)
+        
+        if self.move_delay < current_frequency:
             return
         
         self.move_delay = 0
@@ -81,29 +83,29 @@ class Ghost:
                 f"in_house={self.in_house}, vulnerable={self.is_vulnerable})")
 
 
-# ==================== FANTASMAS ESPECÍFICOS ====================
-
 class Blinky(Ghost):
-    """Fantasma rojo - Perseguidor agresivo."""
+    """Fantasma ROJO - El más agresivo."""
     def __init__(self, initial_position: Tuple[int, int]):
         super().__init__(initial_position, "blinky")
-        # CORREGIDO: Más lento que Pac-Man (6 vs 8)
-        self.move_frequency = 8
+        self.move_frequency = 12
+
 
 class Pinky(Ghost):
-    """Fantasma rosa - Emboscador."""
+    """Fantasma ROSA - Emboscador."""
     def __init__(self, initial_position: Tuple[int, int]):
         super().__init__(initial_position, "pinky")
-        self.move_frequency = 9
+        self.move_frequency = 14
+
 
 class Inky(Ghost):
-    """Fantasma cyan - Impredecible."""
+    """Fantasma CYAN - Impredecible."""
     def __init__(self, initial_position: Tuple[int, int]):
         super().__init__(initial_position, "inky")
-        self.move_frequency = 10
+        self.move_frequency = 14
+
 
 class Clyde(Ghost):
-    """Fantasma naranja - Tímido."""
+    """Fantasma NARANJA - Tímido."""
     def __init__(self, initial_position: Tuple[int, int]):
         super().__init__(initial_position, "clyde")
-        self.move_frequency = 11
+        self.move_frequency = 16

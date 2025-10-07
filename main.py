@@ -42,7 +42,8 @@ def main():
     # Registrar callbacks del HUD
     def start_game():
         game_core.start_new_game()
-        print(f"[MAIN] Juego iniciado - Nivel {game_core.level}")
+        player_name = hud.get_player_name()
+        print(f"[MAIN] {player_name} inició el juego - Nivel {game_core.level}")
 
     def quit_game():
         pygame.quit()
@@ -90,7 +91,25 @@ def main():
             
             elif game_core.is_game_over():
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-                    start_game()
+                    # Guardar puntaje antes de reiniciar
+                    if game_core.pacman and game_core.pacman.score > 0:
+                        player_name = hud.get_player_name()
+                        
+                        # Siempre guardar el puntaje (no solo high scores)
+                        score_manager.add_score(
+                            score=game_core.pacman.score,
+                            level=game_core.level,
+                            name=player_name
+                        )
+                        
+                        if score_manager.is_high_score(game_core.pacman.score):
+                            print(f"[MAIN] ¡{player_name} logró un nuevo récord! {game_core.pacman.score} puntos")
+                        else:
+                            print(f"[MAIN] Partida guardada: {player_name} - {game_core.pacman.score} puntos")
+                    
+                    # Volver al menú para nuevo jugador
+                    game_core.game_state = GameState.MENU
+                    hud.reset_for_new_game()  # Opcional: limpia el nombre anterior
 
         # --- ACTUALIZAR LÓGICA ---
         if game_core.is_playing():
@@ -113,20 +132,21 @@ def main():
 
         # Debug cada 60 frames (1 segundo)
         if frame_count % 60 == 0 and game_core.is_playing():
-            print(f"[DEBUG] Score: {game_core.pacman.score} | "
+            player_name = hud.get_player_name()
+            print(f"[DEBUG] {player_name} - Score: {game_core.pacman.score} | "
                   f"Vidas: {game_core.pacman.lives} | "
                   f"Comida: {len(game_core.food_positions)} | "
                   f"Fantasmas activos: {sum(1 for g in game_core.ghosts if not g.in_house)}")
 
-    # Guardar puntaje final
-    if game_core.pacman and game_core.pacman.score > 0:
-        if score_manager.is_high_score(game_core.pacman.score):
-            score_manager.add_score(
-                score=game_core.pacman.score,
-                level=game_core.level,
-                name="Player"
-            )
-            print(f"[MAIN] ¡Nuevo récord! {game_core.pacman.score} puntos")
+    # Guardar puntaje final al cerrar el juego (si no se guardó antes)
+    if game_core.pacman and game_core.pacman.score > 0 and game_core.is_game_over():
+        player_name = hud.get_player_name()
+        score_manager.add_score(
+            score=game_core.pacman.score,
+            level=game_core.level,
+            name=player_name
+        )
+        print(f"[MAIN] Partida final guardada: {player_name} - {game_core.pacman.score} puntos")
 
     pygame.quit()
     sys.exit()
